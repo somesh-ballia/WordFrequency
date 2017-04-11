@@ -1,0 +1,402 @@
+#include <stdafx.h>
+#include <conio.h>
+#include <cstring>
+#include <direct.h>
+#include <PathNameList.h>
+#include <ListDirectoryFiles.h>
+#include <ParseFile.h>
+#include <WordList.h>
+#include <SearchWord.h>
+#include <Output.h>
+#include <ParseLine.h>
+
+#define WORD_TO_SEARCH_SIZE 100
+#define RECURSIVE_ACCESS_ENABLED 1
+#define RECURSIVE_ACCESS_DISABLED 0
+#define SEARCH_ACTIVE 1
+#define SEARCH_UNACTIVE 0
+#define PRINT_MODE_DISABLED 0
+#define PRINT_MODE_SCREEN 1
+#define PRINT_MODE_FILE 2
+#define FILE_NAME_PRINT_MODE_AND 48 // ascii value of 0
+
+int allocateMemoryForNewWord(char** new_word,int size)
+{
+	*new_word = new char[size];
+	if (NULL != *new_word)
+	{
+		return SUCCESS;
+	}
+	else
+	{
+		return FAILURE;
+	}
+}
+
+void printHelpMessage()
+{
+	printf("\n\nCOMMAND -i <directory path> [-os] [-of] <file path> [-r] [-s] [-help]");
+	printf("\n-i\t: for input directory\n-os\t: for output on screen \n-of\t: for output on a file \n-r\t: for recursive directory access\n");
+	printf("-s\t: for searching files by words");
+}
+
+int validateDirectoryPath(char* directory_path)
+{
+	if (_chdir(directory_path))
+	{
+		switch(errno)
+		{		
+		case EACCES:
+			printf("\nAccess to %s is denied",directory_path);
+			break;
+
+		case ENOENT:
+			printf("\n%s : No such directory found",directory_path);
+			break;
+
+		case EINVAL:
+			printf("\n%s : Invalid path found",directory_path);
+			break;
+
+		default:
+			printf("\nDirectory not found");
+			break;
+		}
+		return FAILURE;
+	}
+	else
+	{
+		return SUCCESS;
+	}
+}
+
+int validateFilePath(char* file_path)
+{
+	FILE *write_fp = fopen(file_path,"w");
+	if (NULL != write_fp)
+	{
+		fclose(write_fp);
+		return SUCCESS;
+	}
+	else
+	{
+		return FAILURE;
+	}
+}
+
+int validateCommandLineConstruct(char* input_path, char* output_path, int recursive_directory_access, int print_mode, int search_status)
+{		
+	if (NULL == input_path)
+	{
+		printf("\nInput directory path not found");
+		printHelpMessage();
+		return FAILURE;
+	}
+	if (0 == strlen(input_path))
+	{
+		printf("\nInput directory path not found");
+		printHelpMessage();
+		return FAILURE;
+	}
+
+	// checking if any post processing action is requested
+	if (PRINT_MODE_DISABLED == print_mode && SEARCH_UNACTIVE == search_status)
+	{
+		printf("\nNo post processing action requested");
+		printHelpMessage();
+		return FAILURE;
+	}
+
+	if (print_mode == PRINT_MODE_FILE)
+	{
+		if (NULL == output_path)
+		{
+			printf("\nOutput file path not found");
+			printHelpMessage();
+			return FAILURE;
+		}
+		if (0 == strlen(output_path))
+		{
+			printf("\nOutput file path not found");
+			printHelpMessage();
+			return FAILURE;
+		}
+	}
+	return SUCCESS;
+}
+
+int validateCommandLineArgument(int argument_number , char* arguments[],char** input_path, char** output_path, int* recursive_directory_access, int* print_mode, int* search_status)
+{	
+	int argument_counter = 1;
+	*input_path = NULL;
+	*output_path = NULL;
+	*search_status = SEARCH_UNACTIVE;
+	*print_mode = PRINT_MODE_DISABLED;
+
+	// By default recursive directory access is disabled
+	*recursive_directory_access = RECURSIVE_ACCESS_DISABLED;
+
+	if (argument_number > 1)
+	{
+		while (NULL != arguments[argument_counter])
+		{
+			if (!strcmp(arguments[argument_counter],"-i") || !strcmp(arguments[argument_counter],"-I"))
+			{
+				if (NULL != arguments[argument_counter+1])
+				{
+					*input_path = arguments[argument_counter+1];
+					argument_counter++;
+					if (FAILURE == validateDirectoryPath(*input_path))
+					{
+						printf("\nInvalid Path Name");
+						printHelpMessage();
+						return FAILURE;
+					}
+				}
+				else
+				{
+					printf("\nInvalid Path Name");
+					printHelpMessage();
+					return FAILURE;
+				}
+			}
+			else if (!strcmp(arguments[argument_counter],"-r") || !strcmp(arguments[argument_counter],"-R"))
+			{
+				*recursive_directory_access = 1;
+			}
+			else if (!strcmp(arguments[argument_counter],"-OS")|| !strcmp(arguments[argument_counter],"-Os") || !strcmp(arguments[argument_counter],"-oS") || !strcmp(arguments[argument_counter],"-os"))
+			{	
+				*output_path = NULL;
+				*print_mode = PRINT_MODE_SCREEN;
+			}
+			else if (!strcmp(arguments[argument_counter],"-OF") ||!strcmp(arguments[argument_counter],"-Of") || !strcmp(arguments[argument_counter],"-oF") || !strcmp(arguments[argument_counter],"-of"))
+			{
+				if (NULL != arguments[argument_counter+1])
+				{					
+					*print_mode = PRINT_MODE_FILE;					
+					*output_path = arguments[argument_counter+1];
+					argument_counter++;
+					if (FAILURE == validateFilePath(*output_path))
+					{
+						printf("\nInvalid output file name");
+						printHelpMessage();
+						return FAILURE;
+					}					
+				}
+				else
+				{
+					printf("\nInvalid output file name");
+					printHelpMessage();
+					return FAILURE;
+				}
+			}
+			else if (!strcmp(arguments[argument_counter],"-s") || !strcmp(arguments[argument_counter],"-S"))
+			{
+				*search_status = SEARCH_ACTIVE;
+			}			
+			else
+			{
+				printf("\nUnknown command %s",arguments[argument_counter]);
+				return FAILURE;
+			}
+			argument_counter++;	
+		}
+	}
+	else
+	{
+		printHelpMessage();
+		return FAILURE;
+	}
+
+	if (FAILURE == validateCommandLineConstruct(*input_path,*output_path,*recursive_directory_access,*print_mode,*search_status))
+	{
+		return FAILURE;
+	}
+	return SUCCESS;
+}
+
+int SearchForFileNames(WordList* obj_word_list)
+{	
+	char* words_to_search = NULL;
+	if (SUCCESS == allocateMemoryForNewWord(&words_to_search,WORD_TO_SEARCH_SIZE))
+	{
+		int number_of_words = 0;
+		char file_name_print_mode = FILE_NAME_PRINT_MODE_AND;
+		SearchWord* obj_search_word = new SearchWord(obj_word_list);
+		Output obj_output;
+		do
+		{
+			*words_to_search = NULL;
+			PathNameFrequency* obj_path_name_frequency = new PathNameFrequency();	
+			ParseLine* obj_parse_line = new ParseLine();	
+
+			printf("\nEnter the Words \n:- ");
+			gets(words_to_search);			
+			if (SUCCESS == obj_parse_line->parse(words_to_search,&number_of_words))
+			{
+				if (1 < number_of_words)
+				{
+					printf("\nPress 0 for common files\nPress anything else for all files\n");
+					file_name_print_mode = getch();
+				}
+
+				char* word = NULL;
+				if (SUCCESS == obj_parse_line->getNextWord(&word))
+				{
+						while (NULL != word)
+						{
+							obj_search_word->search(word,obj_path_name_frequency);	
+							delete word;
+							obj_parse_line->getNextWord(&word);
+						}
+						if (FILE_NAME_PRINT_MODE_AND != file_name_print_mode)
+						{
+							number_of_words = 1;
+						}
+						obj_output.printFileList(obj_path_name_frequency,number_of_words);
+						printf("\nEnter 1 to exit\n");
+				}	
+				else
+				{
+					return FAILURE;
+				}
+			}
+			else
+			{
+				return FAILURE;
+			}
+		}
+		while('1' != getch());
+	}
+	else
+	{
+		return FAILURE;
+	}
+	return SUCCESS;
+}
+
+int main(int argc, char* argv[])
+{
+	bool file_parsed = false;
+	char* input_path;	
+	char* output_path;
+	int search_status;
+	int print_mode;
+	int recursive_directory_access;	
+	int is_data_processed = FAILURE;
+
+	if (SUCCESS == validateCommandLineArgument(argc,argv,&input_path,&output_path,&recursive_directory_access,&print_mode,&search_status))
+	{
+		PathNameList* obj_file_path_name_list = new PathNameList();
+		PathNameList* obj_directory_name_list = new PathNameList();
+		ListDirectoryFiles* obj_list_directory_files = new ListDirectoryFiles();
+		
+		// populating the file list with all the file names and directory list with all directory names
+		if (SUCCESS == obj_directory_name_list->insert(input_path))
+		{
+			char* current_path = NULL;
+			if (SUCCESS == obj_directory_name_list->getNextPath(&current_path))
+			{
+				while (NULL != current_path)
+				{
+					if (RECURSIVE_ACCESS_ENABLED == recursive_directory_access)
+					{
+						obj_list_directory_files->populateDirectoryPathNameList(current_path,obj_directory_name_list);					
+					}
+					if (SUCCESS == obj_list_directory_files->populateFilePathNameList(current_path,obj_file_path_name_list))
+					{						
+						is_data_processed = SUCCESS;
+					}
+					obj_directory_name_list->getNextPath(&current_path);					
+				}
+			}			
+			if (SUCCESS == is_data_processed) 
+			{
+				// Parsing all the required files and populating the word list
+				ParseFile obj_parse_file;
+				WordList* obj_word_list = new WordList();
+				current_path = NULL;
+				if (SUCCESS == obj_file_path_name_list->getNextPath(&current_path))
+				{
+					while (NULL != current_path)
+					{
+						if (SUCCESS == obj_parse_file.parse(current_path,obj_word_list))
+						{		
+							printf("\nFile Parsed : %s",current_path);
+							file_parsed = true;
+						}			
+						obj_file_path_name_list->getNextPath(&current_path);
+					}
+
+					// all files have been parsed by now and the word list is populated
+					if (SUCCESS == file_parsed)
+					{
+						Output obj_output;
+						
+						// Processing search options
+						if (SEARCH_ACTIVE == search_status)
+						{
+							if(FAILURE == SearchForFileNames(obj_word_list))
+							{
+								printf("\nError in starting search module");
+							}
+							else
+							{
+								printf("\nSearch complete");
+							}
+						}
+
+						// Processing print options to file or on screen
+						if (PRINT_MODE_DISABLED != print_mode)
+						{
+							switch(print_mode)
+							{
+							case PRINT_MODE_SCREEN:
+								obj_output.printOnScreen(obj_word_list);
+								break;
+							case PRINT_MODE_FILE:
+								printf("\nExporting files to %s",output_path);
+								obj_output.printToFile(output_path,obj_word_list);
+								break;
+							default:
+								printf("\nUnknown print option");
+								break;
+							}
+						}
+						printf("\nProgram will exit now\n");
+					}
+					else
+					{
+						printf("\nError in parsing files");
+						getch();
+						return(-1);
+					}
+				}
+				else
+				{
+					printf("\nError in fetching file paths");
+					getch();
+					return(-1);
+				}
+			}
+			else
+			{
+				printf("\nError in reading directory information");
+				getch();
+				return(-1);
+			}
+		}
+		else
+		{
+			printf("\nError in processing directory list");
+			getch();
+			return(-1);
+		}		
+	}
+	else
+	{
+		printf("\nInvalid Command Line Argument");		
+	}
+	getch();
+	return 0;
+}
